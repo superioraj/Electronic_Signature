@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<title>전자 서명 (그레이스케일)</title>
+	<style>
+		:root{ --bg:#f6f6f6; --panel:#efefef; --ink:#111; --muted:#9b9b9b }
+		html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+		.wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:28px}
+		.card{width:880px;max-width:96vw;background:linear-gradient(180deg,var(--panel),#f7f7f7);border-radius:12px;box-shadow:0 6px 22px rgba(0,0,0,0.06);padding:20px}
+		h1{font-size:18px;margin:0 0 12px;color:#222}
+		p.lead{margin:0 0 18px;color:var(--muted);font-size:13px}
+
+		.sig-area{background:transparent;border:2px solid rgba(0,0,0,0.08);border-radius:8px;padding:14px;display:grid;grid-template-columns:1fr 260px;gap:14px}
+		.box{background:linear-gradient(180deg,rgba(0,0,0,0.02),rgba(0,0,0,0.01));border-radius:6px;padding:12px;position:relative;display:flex;align-items:center;justify-content:center}
+
+		/* dotted guide lines applied to the container behind canvas */
+		.guide{
+			position:absolute;inset:12px;border-radius:6px;pointer-events:none;
+			/* light dotted grid for guidance (shows through canvas because canvas is transparent) */
+			background-image: radial-gradient(circle, rgba(0,0,0,0.10) 1px, transparent 1px);
+			background-size:8px 28px;
+			opacity:0.55;
+		}
+
+		/* vertical dotted guide columns: short dots stacked vertically, columns repeated across width */
+		.vguide{
+			position:absolute;inset:12px;border-radius:6px;pointer-events:none;
+			background-image: repeating-linear-gradient(to bottom, rgba(0,0,0,0.09) 0 2px, transparent 2px 10px);
+			background-size:24px 100%;
+			opacity:0.28;
+		}
+
+		canvas{display:block;max-width:100%;height:auto;border-radius:6px;touch-action:none}
+
+		.controls{display:flex;flex-direction:column;gap:10px}
+		.controls .info{font-size:13px;color:var(--muted)}
+		.slider-group{display:flex;flex-direction:column;gap:8px}
+		.slider-vertical{display:flex;flex-direction:column;align-items:center;gap:4px}
+		.slider-vertical input[type="range"]{writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:8px;height:120px}
+		.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#fff;border:1px solid rgba(0,0,0,0.06);cursor:pointer;text-align:center;font-weight:600;color:var(--ink)}
+		.btn.active{background:#111;color:#fff;border-color:rgba(0,0,0,0.18)}
+		.btn.pressed{transform:translateY(1px);opacity:0.95}
+		.btn.secondary{background:transparent;border:1px dashed rgba(0,0,0,0.08);font-weight:600}
+		.btn.danger{background:#111;color:#fff}
+		.small{font-size:13px;padding:8px 10px}
+		footer.note{margin-top:12px;font-size:12px;color:var(--muted)}
+
+		@media(max-width:720px){.sig-area{grid-template-columns:1fr;}.controls{flex-direction:row;justify-content:space-between}}
+	</style>
+</head>
+<body>
+	<div class="wrap">
+		<div class="card">
+			<h1>전자 서명</h1>
+			<p class="lead">서명란에 마우스(또는 터치)로 서명하세요. 완료 후 '다운로드'를 누르면 배경이 없는 PNG로 저장됩니다.</p>
+
+			<div class="sig-area">
+				<div class="box" id="box">
+					<div class="guide"></div>
+					<div class="vguide"></div>
+					<canvas id="sig"></canvas>
+				</div>
+
+				<div class="controls">
+					<div class="info">도움말: 검정색 선이 서명입니다. 투명 배경 PNG로 내보내집니다.</div>
+					<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+						<button id="penThin" class="btn small">얇게</button>
+						<button id="penThick" class="btn small">굵게</button>
+						<button id="clear" class="btn secondary small">지우기</button>
+						<button id="download" class="btn small">다운로드 (PNG)</button>
+					</div>
+					<div style="display:flex;gap:10px;margin-top:10px">
+						<!-- 왼쪽: 색상 선택 -->
+						<div style="flex:1">
+							<label style="font-size:13px;color:var(--muted)">잉크 색상</label>
+							<div style="display:flex;gap:6px;margin-top:6px">
+								<button class="btn small" data-color="#111">검정</button>
+								<button class="btn small" data-color="#666">회색</button>
+							</div>
+						</div>
+						<!-- 오른쪽: 3열 슬라이더 -->
+						<div style="display:flex;gap:12px;width:180px">
+							<!-- 스무딩 -->
+							<div class="slider-vertical">
+								<label style="font-size:12px;color:var(--muted);text-align:center">스무딩<br><small id="smoothVal">60%</small></label>
+								<input id="smooth" type="range" min="0" max="1" step="0.01" value="0.6" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:6px;height:100px" />
+							</div>
+							<!-- 자석 -->
+							<div class="slider-vertical">
+								<label style="font-size:12px;color:var(--muted);text-align:center">자석<br><small id="magnetVal">40%</small></label>
+								<input id="magnet" type="range" min="0" max="1" step="0.01" value="0.4" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:6px;height:100px" />
+							</div>
+							<!-- 굵기 -->
+							<div class="slider-vertical">
+								<label style="font-size:12px;color:var(--muted);text-align:center">굵기<br><small id="thicknessVal">2.0px</small></label>
+								<input id="thickness" type="range" min="0.5" max="5" step="0.1" value="2" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:6px;height:100px" />
+							</div>
+						</div>
+					</div>
+
+					<footer class="note">서명은 로컬에서만 생성됩니다. 서버로 전송되지 않습니다.</footer>
+				</div>
+			</div>
+
+		</div>
+	</div>
+
+	<script>
+		const canvas = document.getElementById('sig');
+		const box = document.getElementById('box');
+		const clearBtn = document.getElementById('clear');
+		const downloadBtn = document.getElementById('download');
+		const penThin = document.getElementById('penThin');
+		const penThick = document.getElementById('penThick');
+
+		// color option buttons
+		const colorBtns = document.querySelectorAll('[data-color]');
+
+		let ctx, drawing=false, lastX=0, lastY=0, strokeColor='#111', lineWidth=2;
+		// smoothing: 0 = no smoothing (accurate), 1 = use midpoint smoothing (more smooth)
+		let smooth = 0.6;
+	// magnet: how strongly the curve 'snaps' toward the midpoint (0..1)
+	let magnet = 0.4;		// helper to flash pressed state for one-shot buttons
+		function flashPressed(btn){
+			btn.classList.add('pressed');
+			setTimeout(()=>btn.classList.remove('pressed'), 160);
+		}
+
+		// pen active toggles
+		function setPenActive(el){
+			penThin.classList.remove('active');
+			penThick.classList.remove('active');
+			if(el) el.classList.add('active');
+		}
+
+		// toggling helpers for pen and colors
+		function togglePen(el, width){
+			if(el.classList.contains('active')){
+				// deactivate -> reset to default
+				el.classList.remove('active');
+				lineWidth = 2;
+			} else {
+				setPenActive(el);
+				lineWidth = width;
+			}
+			redrawSettings();
+		}
+
+		penThin.addEventListener('click', ()=>{ togglePen(penThin, 1.6); flashPressed(penThin); });
+		penThick.addEventListener('click', ()=>{ togglePen(penThick, 3.8); flashPressed(penThick); });
+
+		// color buttons behavior (toggle active on each button individually)
+	colorBtns.forEach(b=>{
+		b.addEventListener('click', ()=>{
+			const col = b.getAttribute('data-color');
+			if(b.classList.contains('active')){
+				// deactivate: remove active style and revert to default color
+				b.classList.remove('active');
+				b.style.background = '';
+				b.style.color = '';
+				strokeColor = '#111';
+			} else {
+				// activate this color and clear others
+				colorBtns.forEach(x=>{ x.classList.remove('active'); x.style.background=''; x.style.color=''; });
+				b.classList.add('active');
+				// apply button background to match color and choose contrasting text
+				b.style.background = col;
+				// pick white text for dark colors, black for light colors
+				const c = col.replace('#','');
+				const r = parseInt(c.substring(0,2),16);
+				const g = parseInt(c.substring(2,4),16);
+				const bl = parseInt(c.substring(4,6),16);
+				const luminance = (0.299*r + 0.587*g + 0.114*bl);
+				b.style.color = luminance < 140 ? '#fff' : '#000';
+				strokeColor = col;
+			}
+			redrawSettings();
+			flashPressed(b);
+		});
+	});
+
+	// smoothing control
+	const smoothSlider = document.getElementById('smooth');
+	const smoothVal = document.getElementById('smoothVal');
+	smoothSlider.addEventListener('input', ()=>{
+		smooth = parseFloat(smoothSlider.value);
+		smoothVal.textContent = Math.round(smooth*100) + '%';
+	});
+
+	// magnet control (snap-to-curve strength)
+	const magnetSlider = document.getElementById('magnet');
+	const magnetVal = document.getElementById('magnetVal');
+	magnetSlider.addEventListener('input', ()=>{
+		magnet = parseFloat(magnetSlider.value);
+		magnetVal.textContent = Math.round(magnet*100) + '%';
+	});
+
+	// thickness control (pen width)
+	const thicknessSlider = document.getElementById('thickness');
+	const thicknessVal = document.getElementById('thicknessVal');
+	thicknessSlider.addEventListener('input', ()=>{
+		lineWidth = parseFloat(thicknessSlider.value);
+		thicknessVal.textContent = lineWidth.toFixed(1) + 'px';
+		redrawSettings();
+	});
+	// Clear button: clear canvas immediately on click
+	clearBtn.addEventListener('click', ()=>{
+		ctx.clearRect(0,0,canvas.width,canvas.height);
+		flashPressed(clearBtn);
+	});
+		// Download button: immediate download on click
+		downloadBtn.addEventListener('click', ()=>{
+			// Create a temporary canvas at device pixels to preserve quality
+			const dpr = window.devicePixelRatio || 1;
+			const w = canvas.width; const h = canvas.height;
+			const tmp = document.createElement('canvas');
+			tmp.width = w; tmp.height = h;
+			const tctx = tmp.getContext('2d');
+			// Copy drawing (canvas is already scaled by DPR earlier) — draw the source canvas scaled to tmp
+			tctx.drawImage(canvas, 0, 0);
+			// Export PNG with transparency
+			tmp.toBlob(function(blob){
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url; a.download = 'signature.png';
+				document.body.appendChild(a); a.click(); a.remove();
+				setTimeout(()=>URL.revokeObjectURL(url), 60000);
+			}, 'image/png');
+			flashPressed(downloadBtn);
+		});
+
+		// initialize active states for controls
+		(function initActive(){
+			if(lineWidth <= 2) setPenActive(penThin); else setPenActive(penThick);
+			colorBtns.forEach(b=>{ if(b.getAttribute('data-color') === strokeColor) b.classList.add('active'); });
+		})();
+
+		function fitCanvas(){
+			const rect = box.getBoundingClientRect();
+			const dpr = window.devicePixelRatio || 1;
+			// leave some padding so guide area aligns with CSS padding
+			const pad = 12*2; // matches CSS insets
+			canvas.width = Math.max(300, Math.floor((rect.width - 24) * dpr));
+			canvas.height = Math.max(120, Math.floor((rect.height - 24) * dpr));
+			canvas.style.width = (rect.width - 24) + 'px';
+			canvas.style.height = (rect.height - 24) + 'px';
+			ctx = canvas.getContext('2d');
+			ctx.scale(dpr, dpr);
+			ctx.lineCap = 'round';
+			ctx.lineJoin = 'round';
+			ctx.miterLimit = 1; // add sharp calligraphic effect
+			redrawSettings();
+		}
+
+		function redrawSettings(){
+			ctx.strokeStyle = strokeColor;
+			ctx.lineWidth = lineWidth;
+		}
+
+		function pointerDown(e){
+			e.preventDefault();
+			drawing = true;
+			const pos = getPos(e);
+			lastX = pos.x; lastY = pos.y;
+			ctx.beginPath();
+			ctx.moveTo(lastX, lastY);
+		}
+
+		function pointerMove(e){
+			if(!drawing) return;
+			const pos = getPos(e);
+			// compute midpoint between last and current
+			const midX = (lastX + pos.x) / 2;
+			const midY = (lastY + pos.y) / 2;
+			
+			// blend between pos (accurate) and mid (smoothed) using `smooth` [0..1]
+			let endX = pos.x * (1 - smooth) + midX * smooth;
+			let endY = pos.y * (1 - smooth) + midY * smooth;
+			
+			// use magnet to pull end point strongly toward midpoint for smooth curves and circles
+			// magnet creates natural curve attachment by pulling the endpoint toward midpoint
+			// cubic exponential scale: low magnet = minimal pull, high magnet = extreme pull
+			const magnetPull = Math.pow(magnet, 0.5) * 5.0; // cubic curve for dramatic range 0..5
+			const clampedPull = Math.min(magnetPull, 2.0); // cap at 2.0 to prevent overshooting
+			endX = endX * (1 - clampedPull) + midX * clampedPull;
+			endY = endY * (1 - clampedPull) + midY * clampedPull;
+			
+			// compute control point at 40% along the curve for calligraphic brush effect
+			const cpX = lastX + (endX - lastX) * 0.4;
+			const cpY = lastY + (endY - lastY) * 0.4;
+			
+			if(smooth <= 0.01 && magnet <= 0.01){
+				ctx.lineTo(pos.x, pos.y);
+			} else {
+				ctx.quadraticCurveTo(cpX, cpY, endX, endY);
+			}
+			ctx.stroke();
+			lastX = pos.x; lastY = pos.y;
+		}
+
+		function pointerUp(e){
+			if(!drawing) return;
+			drawing = false;
+			ctx.closePath();
+		}
+
+		function getPos(e){
+			const rect = canvas.getBoundingClientRect();
+			const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+			const clientY = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
+			return { x: clientX - rect.left, y: clientY - rect.top };
+		}
+
+	
+
+		// Pointer events (support mouse + touch via pointer events when available)
+		function setupEvents(){
+			// Use pointer events if available
+			if(window.PointerEvent){
+				canvas.addEventListener('pointerdown', pointerDown);
+				canvas.addEventListener('pointermove', pointerMove);
+				window.addEventListener('pointerup', pointerUp);
+			} else {
+				// fallback to mouse/touch
+				canvas.addEventListener('mousedown', pointerDown);
+				canvas.addEventListener('mousemove', pointerMove);
+				window.addEventListener('mouseup', pointerUp);
+				canvas.addEventListener('touchstart', pointerDown, {passive:false});
+				canvas.addEventListener('touchmove', pointerMove, {passive:false});
+				window.addEventListener('touchend', pointerUp);
+			}
+		}
+
+		window.addEventListener('resize', fitCanvas);
+		window.addEventListener('orientationchange', fitCanvas);
+
+		// initialize
+		fitCanvas();
+		setupEvents();
+
+	</script>
+</body>
+</html>
